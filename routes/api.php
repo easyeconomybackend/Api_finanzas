@@ -1,9 +1,23 @@
 <?php
 
 use App\Http\Controllers\Auth\AuthController;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\MovementController;
+
+Route::get('/', function () {
+    return response()->json(['message' => 'Welcome to the Finance API']);
+});
+
+Route::get('/error', function () {
+    return response()->json(['error' => 'error into the server'], 500);
+})->name('login');
 
 // Rutas de autenticación
 Route::post('/login', [AuthController::class, 'login'])
     ->middleware('throttle:5,1');
+
+// Rutas // Movimientos
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/movements', [MovementController::class, 'index']);
+    Route::post('/movements', [MovementController::class, 'create']);
+});
