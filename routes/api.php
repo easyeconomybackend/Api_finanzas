@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\AuthController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\MovementController;
+use App\Http\Controllers\TagController;
 
 Route::get('/', function () {
     return response()->json(['message' => 'Welcome to the Finance API']);
@@ -20,4 +21,8 @@ Route::post('/login', [AuthController::class, 'login'])
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/movements', [MovementController::class, 'index']);
     Route::post('/movements', [MovementController::class, 'create']);
+    Route::post('/tags', [TagController::class, 'store']);
+    Route::post('/tags/sugerir', [TagController::class, 'sugerirDesdeIA']);
+
 });
+
