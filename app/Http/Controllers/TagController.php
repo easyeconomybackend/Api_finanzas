@@ -71,14 +71,8 @@ class TagController extends Controller
             // Generar sugerencia con IA (usando etiquetas existentes como contexto)
             $sugerida = $this->etiquetarConIA($request->descripcion, $request->monto, $etiquetasExistentes);
 
-            // Buscar si ya existe la etiqueta
-            $tag = Tag::firstOrCreate(
-                ['name_tag' => $sugerida, 'user_id' => $user->id]
-            );
-
             return response()->json([
-                'sugerida' => $sugerida,
-                'tag' => $tag
+                'sugerencia' => $sugerida,
             ]);
 
         } catch (\Exception $e) {
@@ -86,7 +80,6 @@ class TagController extends Controller
             return response()->json(['error' => 'Error al sugerir etiqueta.', 'message' => $e->getMessage()], 500);
         }
     }
-
 private function etiquetarConIA(string $descripcion, float $monto, array $opciones): string
     {
         $apiKey = config('services.groq.key');
