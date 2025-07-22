@@ -5,11 +5,11 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log; // 👈 ESTA LÍNEA
+use Illuminate\Support\Facades\Log;
 use App\Models\Tag;
+
 class TagController extends Controller
 {
-    // ✅ Crear una etiqueta manualmente
     public function store(Request $request)
     {
         try {
@@ -18,11 +18,8 @@ class TagController extends Controller
             ]);
 
             $user = Auth::user();
-            if (!$user) {
-                return response()->json(['error' => 'No autenticado'], 401);
-            }
+            if (!$user) return response()->json(['error' => 'No autenticado'], 401);
 
-            // Validar si ya existe una etiqueta con ese nombre para ese usuario
             $existe = Tag::where('user_id', $user->id)
                         ->where('name_tag', $request->name_tag)
                         ->exists();
@@ -33,7 +30,7 @@ class TagController extends Controller
 
             $tag = Tag::create([
                 'name_tag' => $request->name_tag,
-                'user_id' => Auth::id(),
+                'user_id' => $user->id,
             ]);
 
             return response()->json([
@@ -50,8 +47,6 @@ class TagController extends Controller
         }
     }
 
-
-    // 🤖 Sugerir una etiqueta con IA usando Groq
     public function sugerirDesdeIA(Request $request)
     {
         $request->validate([
@@ -60,61 +55,69 @@ class TagController extends Controller
         ]);
 
         $user = Auth::user();
-        if (!$user) {
-            return response()->json(['error' => 'No autenticado'], 401);
-        }
+        if (!$user) return response()->json(['error' => 'No autenticado'], 401);
 
         try {
-            // Obtener todas las etiquetas existentes del usuario
-            $etiquetasExistentes = Tag::where('user_id', $user->id)->pluck('name_tag')->toArray();
-
-            // Generar sugerencia con IA (usando etiquetas existentes como contexto)
-            $sugerida = $this->etiquetarConIA($request->descripcion, $request->monto, $etiquetasExistentes);
-
+            $sugerida = $this->etiquetarConIA($request->descripcion, $request->monto);
             return response()->json([
                 'sugerencia' => $sugerida,
             ]);
-
         } catch (\Exception $e) {
             Log::error('Error con IA: ' . $e->getMessage());
-            return response()->json(['error' => 'Error al sugerir etiqueta.', 'message' => $e->getMessage()], 500);
+            return response()->json([
+                'error' => 'Error al sugerir etiqueta.',
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
-private function etiquetarConIA(string $descripcion, float $monto, array $opciones): string
-    {
-        $apiKey = config('services.groq.key');
-        $model = config('services.groq.model');
-        $lista = empty($opciones)
-            ? 'Transporte, Alimentación, Servicios, Entretenimiento, Salud, Ingresos, Educación, Vivienda, Otros'
-            : implode(', ', $opciones);
 
-        // Prompt para la IA
-        $prompt = <<<PROMPT
-    Actúa como un asistente de finanzas personales. Tienes una lista de etiquetas existentes del usuario:
+private function etiquetarConIA(string $descripcion, float $monto): string
+{
+    $apiKey = config('services.groq.key');
 
-    $lista
+    $user = Auth::user();
+    if (!$user) throw new \Exception('Usuario no autenticado');
 
-    Tu tarea es:
-    1. Si alguna de estas etiquetas describe bien el movimiento, responde solo con una de ellas.
-    2. Si **ninguna** etiqueta aplica bien, entonces **inventa una nueva etiqueta corta y precisa** (1 o 2 palabras máximo) que clasifique este movimiento.
+    $opciones = Tag::where('user_id', $user->id)->pluck('name_tag')->toArray();
 
-    No expliques tu respuesta. Solo responde con una sola etiqueta (ya sea existente o nueva).
+    $lista = empty($opciones)
+        ? 'Otros'
+        : implode(', ', $opciones);
 
-    Movimiento:
-    Descripción: "$descripcion"
-    Monto: $monto
+    $prompt = <<<PROMPT
+Actúa como un asistente de finanzas personales. Tienes una lista de etiquetas existentes del usuario:
 
-    Etiqueta sugerida:
-    PROMPT;
+$lista
 
+Tu tarea es:
+1. Si alguna de estas etiquetas describe bien el movimiento, responde solo con una de ellas.
+2. Si **ninguna** etiqueta aplica bien, entonces **inventa una nueva etiqueta corta y precisa** (1 o 2 palabras máximo) que clasifique este movimiento.
+
+No expliques tu respuesta. Solo responde con una sola etiqueta (ya sea existente o nueva).
+
+Movimiento:
+Descripción: "$descripcion"
+Monto: $monto
+
+Etiqueta sugerida:
+PROMPT;
+
+    // ✅ Lista de modelos disponibles (orden de prioridad)
+    $modelos = [
+        'llama3-70b-8192',
+        'llama-3.1-8b-instant',
+        'gemma2-9b-it',
+    ];
+
+    foreach ($modelos as $modelo) {
         try {
             $response = Http::withOptions([
-                'verify' => 'C:\Program Files\php8.3\extras\ssl\cacert.pem', // Ruta a tu cacert.pem
+                'verify' => 'C:\Program Files\php8.3\extras\ssl\cacert.pem',
             ])->withHeaders([
                 'Authorization' => "Bearer $apiKey",
                 'Content-Type' => 'application/json',
             ])->post('https://api.groq.com/openai/v1/chat/completions', [
-                'model' => $model,
+                'model' => $modelo,
                 'messages' => [
                     ['role' => 'user', 'content' => $prompt],
                 ],
@@ -122,15 +125,16 @@ private function etiquetarConIA(string $descripcion, float $monto, array $opcion
             ]);
 
             if ($response->successful()) {
+                Log::info("IA: respuesta exitosa con modelo $modelo");
                 return trim($response['choices'][0]['message']['content']);
             }
 
-            throw new \Exception('Respuesta inválida de Groq: ' . $response->body());
+            Log::warning("IA: modelo $modelo falló → código HTTP: " . $response->status());
         } catch (\Exception $e) {
-            // Puedes guardar el error en logs o enviarlo como parte de la respuesta
-            Log::error('Error con IA: ' . $e->getMessage());
-            throw new \Exception('Error al comunicarse con el servicio de etiquetas IA.');
+            Log::error("IA: error al usar modelo $modelo → " . $e->getMessage());
         }
     }
 
+    throw new \Exception('Todos los modelos de Groq fallaron al generar la etiqueta.');
+}
 }
