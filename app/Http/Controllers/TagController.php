@@ -46,6 +46,26 @@ class TagController extends Controller
             ], 500);
         }
     }
+    public function index()
+    {
+        $user = Auth::user();
+        if (!$user) return response()->json(['error' => 'No autenticado'], 401);
+
+        try {
+            $tags = Tag::where('user_id', $user->id)->get();
+
+            return response()->json([
+                'tags' => $tags,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error al obtener etiquetas: ' . $e->getMessage());
+            return response()->json([
+                'error' => 'Error al obtener etiquetas',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
 
     public function sugerirDesdeIA(Request $request)
     {

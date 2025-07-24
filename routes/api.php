@@ -21,8 +21,9 @@ Route::post('/login', [AuthController::class, 'login'])
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/movements', [MovementController::class, 'index']);
     Route::post('/movements', [MovementController::class, 'create']);
-    Route::post('/tags', [TagController::class, 'store']);
-    Route::post('/tags/sugerir', [TagController::class, 'sugerirDesdeIA']);
+    Route::post('/tags/create', [TagController::class, 'store']);
+    Route::post('/tags/suggestion', [TagController::class, 'sugerirDesdeIA']);
+    Route::get('/tags', [TagController::class, 'index']);
 
 });
 
