@@ -86,133 +86,134 @@ class MovementController extends Controller
         }
     }
     public function sugerirMovimientoConIA(Request $request): JsonResponse
-    {
-        $validated = Validator::make($request->all(), [
-            'transcripcion' => 'required|string',
-        ]);
+{
+    $validated = Validator::make($request->all(), [
+        'transcripcion' => 'required|string',
+    ]);
 
-        if ($validated->fails()) {
-            return response()->json([
-                'error' => 'Validation failed',
-                'messages' => $validated->errors()
-            ], 422);
-        }
-
-        try {
-            $user = Auth::user();
-            if (!$user) {
-                return response()->json(['error' => 'Unauthorized'], 401);
-            }
-
-            $transcripcion = $request->input('transcripcion');
-
-            // Preparar prompt: pasar etiquetas existentes para que pueda reutilizarlas
-            $etiquetasExistentes = Tag::where('user_id', $user->id)->pluck('name_tag')->toArray();
-            $listaEtiquetas = empty($etiquetasExistentes) ? 'Ninguna' : implode(', ', $etiquetasExistentes);
-
-            $prompt = <<<PROMPT
-    Eres un asistente de finanzas personales. Te doy una transcripción libre de voz de un movimiento del usuario. Tienes esta lista de etiquetas existentes: 
-    $listaEtiquetas
-
-    Tu tarea es extraer y clasificar el movimiento. Devuelve **únicamente un objeto JSON válido** con estas llaves:
-
-    - "amount": el valor numérico del monto (sin separadores de miles, como número).
-    - "currency": la moneda, asume "COP" si no se especifica otra.
-    - "type": "expense" o "income" según corresponda.
-    - "suggested_tag": una etiqueta existente si aplica bien, o una nueva etiqueta corta (1-2 palabras) si ninguna existente encaja.
-    - "description": una versión corta / limpia de lo que pasó (puede ser la transcripción tal cual).
-
-    Ejemplo de output esperado:
-    {
-    "amount": 50000,
-    "currency": "COP",
-    "type": "expense",
-    "suggested_tag": "Herramientas",
-    "description": "Hoy me compré una pala"
+    if ($validated->fails()) {
+        return response()->json([
+            'error' => 'Validation failed',
+            'messages' => $validated->errors()
+        ], 422);
     }
 
-    No agregues explicaciones ni texto adicional fuera del JSON. Si la transcripción no tiene suficiente información para alguna clave, haz la mejor suposición razonable (por ejemplo, si no se menciona moneda, usa "COP").
+    try {
+        $user = Auth::user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
 
-    Transcripción: "$transcripcion"
-    PROMPT;
+        $transcripcion = $request->input('transcripcion');
 
-            $apiKey = config('services.groq.key');
-            $modelos = [
-                'llama3-70b-8192',
-                'llama-3.1-8b-instant',
-                'gemma2-9b-it',
-            ];
+        // Obtener etiquetas existentes
+        $etiquetasExistentes = Tag::where('user_id', $user->id)->pluck('name_tag')->toArray();
+        $listaEtiquetas = empty($etiquetasExistentes) ? 'Ninguna' : implode(', ', $etiquetasExistentes);
 
-            $rawResponseContent = null;
-            foreach ($modelos as $modelo) {
-                try {
-                    $response = Http::withOptions([
-                        'verify' => 'C:\Program Files\php8.3\extras\ssl\cacert.pem',
-                    ])->withHeaders([
-                        'Authorization' => "Bearer $apiKey",
-                        'Content-Type' => 'application/json',
-                    ])->post('https://api.groq.com/openai/v1/chat/completions', [
-                        'model' => $modelo,
-                        'messages' => [
-                            ['role' => 'user', 'content' => $prompt],
-                        ],
-                        'temperature' => 0.2,
-                        'max_tokens' => 300,
-                    ]);
+        // Prompt con refuerzo para evitar campos vacíos
+       $prompt = <<<PROMPT
+        Eres un asistente de finanzas personales. Te doy una transcripción libre de voz de un movimiento del usuario. Tienes esta lista de etiquetas existentes: 
+        $listaEtiquetas
 
-                    if ($response->successful()) {
-                        $rawResponseContent = trim($response['choices'][0]['message']['content']);
-                        break;
-                    }
-                } catch (\Exception $e) {
-                    // seguir con el siguiente modelo
-                    Log::warning("IA modelo $modelo falló: " . $e->getMessage());
+        Tu tarea es extraer y clasificar el movimiento. Devuelve únicamente un objeto JSON válido con estas llaves:
+
+        - "amount": el valor numérico del monto (sin separadores de miles, como número).
+        - "type": "expense" o "income" según corresponda.
+        - "suggested_tag": sugiere una etiqueta de la lista si alguna coincide claramente con el contexto, o crea una nueva etiqueta corta (1-2 palabras) si ninguna encaja. Este campo no puede estar vacío. Este campo es obligatorio tanto para ingresos como para gastos. Si es un ingreso, sugiere una etiqueta como "Salario", "Pago", "Transferencia", etc., si aplica. Si no hay coincidencia, crea una nueva etiqueta corta.
+        - "description": una descripción corta, clara y limpia de lo que pasó (resumida en 3 a 8 palabras máximo, no repitas la transcripción completa).
+
+        Si la transcripción no tiene suficiente información para alguna clave, haz la mejor suposición razonable.
+
+        No incluyas ningún campo adicional como "currency". Devuelve solo las llaves: "amount", "type", "suggested_tag" y "description".
+
+        Ejemplo de output esperado:
+        {
+        "amount": 50000,
+        "type": "expense",
+        "suggested_tag": "Herramientas",
+        "description": "Compra de pala"
+        }
+
+        Transcripción: "$transcripcion"
+        PROMPT;
+
+        $apiKey = config('services.groq.key');
+        $modelos = [
+            'llama3-70b-8192',
+            'llama-3.1-8b-instant',
+            'gemma2-9b-it',
+        ];
+
+        $rawResponseContent = null;
+        foreach ($modelos as $modelo) {
+            try {
+                $response = Http::withOptions([
+                    'verify' => 'C:\Program Files\php8.3\extras\ssl\cacert.pem',
+                ])->withHeaders([
+                    'Authorization' => "Bearer $apiKey",
+                    'Content-Type' => 'application/json',
+                ])->post('https://api.groq.com/openai/v1/chat/completions', [
+                    'model' => $modelo,
+                    'messages' => [
+                        ['role' => 'user', 'content' => $prompt],
+                    ],
+                    'temperature' => 0.2,
+                    'max_tokens' => 300,
+                ]);
+
+                if ($response->successful()) {
+                    $rawResponseContent = trim($response['choices'][0]['message']['content']);
+                    break;
                 }
+            } catch (\Exception $e) {
+                Log::warning("IA modelo $modelo falló: " . $e->getMessage());
             }
+        }
 
-            if (!$rawResponseContent) {
-                return response()->json([
-                    'error' => 'No se obtuvo respuesta válida de la IA.'
-                ], 500);
-            }
-
-            // Intentar decodificar JSON. A veces la IA agrega texto antes/después, así que lo limpiamos.
-            $jsonString = $this->extraerJson($rawResponseContent);
-            if (!$jsonString) {
-                return response()->json([
-                    'error' => 'La IA respondió pero no pudo extraer JSON válido.',
-                    'raw' => $rawResponseContent
-                ], 500);
-            }
-
-            $data = json_decode($jsonString, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                return response()->json([
-                    'error' => 'Error al parsear el JSON de la IA.',
-                    'parse_error' => json_last_error_msg(),
-                    'raw' => $rawResponseContent
-                ], 500);
-            }
-
-            // Normalizaciones mínimas
-            if (!isset($data['currency']) || empty($data['currency'])) {
-                $data['currency'] = 'COP';
-            }
-            if (!isset($data['type'])) {
-                $data['type'] = 'expense';
-            }
-
+        if (!$rawResponseContent) {
             return response()->json([
-                'movement_suggestion' => $data,
-            ], 200);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Error procesando con IA.',
-                'message' => $e->getMessage()
+                'error' => 'No se obtuvo respuesta válida de la IA.'
             ], 500);
         }
+
+        // Extraer JSON del contenido
+        $jsonString = $this->extraerJson($rawResponseContent);
+        if (!$jsonString) {
+            return response()->json([
+                'error' => 'La IA respondió pero no pudo extraer JSON válido.',
+                'raw' => $rawResponseContent
+            ], 500);
+        }
+
+        $data = json_decode($jsonString, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return response()->json([
+                'error' => 'Error al parsear el JSON de la IA.',
+                'parse_error' => json_last_error_msg(),
+                'raw' => $rawResponseContent
+            ], 500);
+        }
+
+        // Normalización de campos
+        if (!isset($data['type'])) {
+            $data['type'] = 'expense';
+        }
+
+        if (empty($data['suggested_tag'])) {
+            $data['suggested_tag'] = 'Sin etiqueta';
+        }
+
+        return response()->json([
+            'movement_suggestion' => $data,
+        ], 200);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'error' => 'Error procesando con IA.',
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * Extrae el primer objeto JSON válido de un string que podría tener ruido.
